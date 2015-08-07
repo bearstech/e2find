@@ -1,23 +1,19 @@
-TARGET = e2find
 LIBS = -lext2fs -lcom_err -lblkid
 CC = gcc
 CFLAGS = -g -Wall
 
 .PHONY: default all clean
 
-default: $(TARGET)
-all: default
-
-OBJECTS = $(patsubst %.c, %.o, e2find.c)
+all: e2find e2find2
 
 %.o: %.c 
 	$(CC) $(CFLAGS) -c $< -o $@
 
-.PRECIOUS: $(TARGET) $(OBJECTS)
+e2find: e2find.o
+	$(CC) $(<) -Wall $(LIBS) -o $@
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -Wall $(LIBS) -o $@
+e2find2: e2find2.o
+	$(CC) $(<) -Wall $(LIBS) -o $@
 
 clean:
-	-rm -f *.o
-	-rm -f $(TARGET)
+	-rm -f *.o e2find e2find2
