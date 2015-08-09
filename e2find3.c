@@ -5,7 +5,6 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <limits.h>
-#include <signal.h> /* FIXME: used for profiling */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <blkid/blkid.h>
@@ -46,6 +45,7 @@ static struct option optl[] = {
   {"help",       no_argument,       NULL, 'h'},
   {"show-mtime", no_argument,       NULL, 'm'},
   {"verbose",    no_argument,       NULL, 'v'},
+  {NULL, 0, NULL, 0},
 };
 
 
@@ -93,27 +93,25 @@ void err(int ret, const char *msg, ...) {
   exit(ret);
 }
 
-int dir_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *buf, void *private) {
+int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *buf, void *private) {
   char *name;
   int filetype;;
   int name_len;
+  char prefix[16];
+  struct ext2_inode inode;
   ext2_ino_t ino;
-  ext2_ino_t *parent_ino_p = (ext2_ino_t*)private;
+  ext2_ino_t parent_ino;
 
   ino = dirent->inode;
+  parent_ino = *(ext2_ino_t*)private;
   filetype = dirent->name_len >> 8;
 
-  if (ino != *parent_ino_p && (filetype & 2) && ino != EXT2_ROOT_INO)
+  if (ino != parent_ino && (filetype & 2) && ino != EXT2_ROOT_INO)
     /* Do not consider directory dirents other than '.' because they'll be
      * handed as the parent ino of their own dirent scan. Except for the root
      * folder which has no parent */
     return 0;
 
-/*
-  int ibyte = ino >> 3;
-  int ibit  = 1 << (ino & 7);
-  dbg("iselect: %-8d  ibyte=%d ibit=%d bit=%d", ino, ibyte, ibit, iselect[ibyte] & ibit ? 1 : 0);
-*/
   if (iselect && !(iselect[ino >> 3] & (1 << (ino & 7))))
     return 0; /* Selection says we're not interested in this inode */
 
@@ -128,17 +126,17 @@ int dir_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *buf, 
    * dir, but it might be not necessary to run it if it turns out that no
    * dirent is selected. */
   if (ppath_st == STATUS_NONE) {
-    if (*parent_ino_p == EXT2_ROOT_INO) {
+    if (parent_ino == EXT2_ROOT_INO) {
       ppath = "";  /* libext2fs resolves this to '/' but we prefer it '' to
                       work with path components concatenation */
       ppath_st = STATUS_STATIC;
     } else {
       int err;
 
-      err =ext2fs_get_pathname(fs, *parent_ino_p, 0, &ppath);
+      err =ext2fs_get_pathname(fs, parent_ino, 0, &ppath);
       if (err) {
-        dbg("warning: get_pathname(%d): error %d", *parent_ino_p, err);
-        snprintf(ppath_err, 16, "<%-8d>", *parent_ino_p);
+        dbg("warning: get_pathname(%d): error %d", parent_ino, err);
+        snprintf(ppath_err, 16, "<%-8d>", parent_ino);
         ppath = ppath_err;
         ppath_st = STATUS_STATIC;
       } else {
@@ -147,10 +145,24 @@ int dir_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *buf, 
     }
   }
 
-  if (ino == *parent_ino_p) /* aka '.' */
-    printf("%s\n", ppath[0] ? ppath : "/");
+  if (opt_show_mtime) {
+    int ret;
+
+    ret = ext2fs_read_inode(fs, ino, &inode);
+    if (ret) {
+      fprintf(stderr, "warning: read_inode #%d: error %d\n", ino, ret);
+      snprintf(prefix, 16, "%10s ", "?");
+    } else {
+      snprintf(prefix, 16, "%10d ", inode.i_mtime > inode.i_ctime ? inode.i_mtime : inode.i_ctime);
+    }
+  } else {
+    prefix[0] = '\0';
+  }
+
+  if (ino == parent_ino) /* aka '.' */
+    printf("%s%s\n", prefix, ppath[0] ? ppath : "/");
   else
-    printf("%s/%.*s\n", ppath, name_len, name);
+    printf("%s%s/%.*s\n", prefix, ppath, name_len, name);
 
   return 0;
 }
@@ -162,8 +174,6 @@ int main(int argc, char **argv) {
   int ret;
   char *blkpath;
   struct stat stat;
-
-//signal(SIGINT, cancel); /* FIXME: used for profiling */
 
   while ((optc = getopt_long(argc, argv, "a:hmv", optl, &opti)) != -1) {
     switch (optc) {
@@ -180,6 +190,8 @@ int main(int argc, char **argv) {
       case 'v':
         opt_verbose = 1;
         break;
+      case '?':
+        exit(10);
     }
   }
 
@@ -231,7 +243,7 @@ int main(int argc, char **argv) {
 
       ret = ext2fs_get_next_inode(scan, &ino, &inode);
       if (ret) {
-        fprintf(stderr, "warning: inode #%d: scan error %d\n", ino, ret);
+        fprintf(stderr, "selection: warning: inode #%d: scan error %d\n", ino, ret);
         continue;
       }
 
@@ -275,8 +287,8 @@ int main(int argc, char **argv) {
     char dirbuf[64*1024];
 
     ret = ext2fs_get_next_inode(scan, &ino, &inode);
-    if (ret) {
-      fprintf(stderr, "warning: inode #%d: scan error %d\n", ino, ret);
+    if (__builtin_expect(ret, 0)) {
+      fprintf(stderr, "dirs: warning: inode #%d: scan error %d\n", ino, ret);
       continue;
     }
 
@@ -292,7 +304,7 @@ int main(int argc, char **argv) {
 
     dbg("%-8d fetching dirents", ino);
     ppath_st = STATUS_NONE;
-    ret = ext2fs_dir_iterate(fs, ino, 0, dirbuf, dir_cb, &ino);
+    ret = ext2fs_dir_iterate(fs, ino, 0, dirbuf, dirent_cb, &ino);
     if (ret)
       err(8, "ext2fs_dir_iterate: error %d", ret);
     if (ppath_st == STATUS_ALLOC)
