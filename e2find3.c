@@ -11,46 +11,53 @@
 #include <ext2fs/ext2fs.h>
 
 static const char *program_name = "e2find";
-/*static const char *program_version = "0.1";*/
+static const char *program_version = "0.3";
 
 static unsigned int opt_after = 0;
 static int opt_show_mtime = 0;
-static int opt_verbose = 0;
+static int opt_debug = 0;
+static char separator = '\n';
 
 static char *fspath;
 static ext2_filsys fs;
 static ext2_inode_scan scan = 0;
-/* Doc says:The buffer_blocks parameter controls how many blocks of the inode
+/* Doc says: The buffer_blocks parameter controls how many blocks of the inode
  * table are read in at a time. A large number of blocks requires more memory,
  * but reduces the overhead in seeking and reading from the disk. If
  * buffer_blocks is zero, a suitable default value will be used. */
 static int buffer_blocks = 0;
 
-/* Holds the dirname (parent path) when iterating dirents. We need to know 1/
- * if it's been allocated and 2/ how because it might be from heap or from
+/* Holds the dirname (parent path) when iterating dirents. We need to know
+ * 1/ if it's been allocated and 2/ how because it might be from stack or from
  * libext2 own's allocation routines */
-char *ppath;
-char ppath_err[16];
-enum ppath_st_e {
+static char *ppath;
+static char ppath_err[16];
+static enum ppath_st_e {
   STATUS_NONE,
   STATUS_ALLOC,
   STATUS_STATIC
 } ppath_st;
 
-/* A bitfield marking seleted inodes, used when a critera such as --after is invoked */
-char *iselect = NULL;
+/* A bitfield marking seleted inodes, used when a critera such as --after is
+ * invoked */
+static char *iselect = NULL;
 
 static struct option optl[] = {
+  {"print0",     no_argument,       NULL, '0'},
   {"after",      required_argument, NULL, 'a'},
+  {"debug",      no_argument,       NULL, 'd'},
   {"help",       no_argument,       NULL, 'h'},
   {"show-mtime", no_argument,       NULL, 'm'},
-  {"verbose",    no_argument,       NULL, 'v'},
+  {"version",    no_argument,       NULL, 'v'},
   {NULL, 0, NULL, 0},
 };
 
 
+#define dbg(msg, ...) if (opt_debug) { fprintf(stderr, "-- " msg "\n", ##__VA_ARGS__); }
+#define err(ret, msg, ...) do { fprintf(stderr, "%s: " msg "\n", program_name, ##__VA_ARGS__); exit(ret); } while (0);
+
 void show_help() {
-  fprintf(stderr,
+  printf(
     "Usage: e2find [options] /path\n" \
     "\n" \
     "List all inodes of an ext2/3/4 filesystem, by name, as efficiently\n" \
@@ -60,37 +67,18 @@ void show_help() {
     "\n" \
     "Options :\n" \
     "\n" \
+    "  -0, --print0          Use 0 characters instead of newlines\n" \
     "  -a, --after TIMESPEC  Only show files modified after TIMESPEC\n" \
+    "  -d, --debug           Show debug/progress informations\n" \
     "  -h, --help            This help\n" \
     "  -m, --mtime           Prefix file names with mtime (as epoch)\n" \
-    "  -v, --verbose         Show debug/progress informations\n" \
+    "  -v, --version         Show program name and version)\n" \
     "\n" \
-    "  TIMESPEC is expressed as Unix epoch (local) time.sage: machin [options] /path\n");
+    "TIMESPEC is expressed as Unix epoch (local) time.\n");
 }
 
-/* Make sure we only call dbg() if necessary (might be used in tight loops for
- * debug purposes), but make dbg() usage easy */
-#define dbg(...) if (opt_verbose) { __dbg(__VA_ARGS__); }
-
-void __dbg(const char *msg, ...) {
-  va_list ap;
-
-  fprintf(stderr, "-- ");
-  va_start(ap, msg);
-  vfprintf(stderr, msg, ap);
-  va_end(ap);
-  fprintf(stderr, "\n");
-}
-
-void err(int ret, const char *msg, ...) {
-  va_list ap;
-
-  fprintf(stderr, "%s: ", program_name);
-  va_start(ap, msg);
-  vfprintf(stderr, msg, ap);
-  va_end(ap);
-  fprintf(stderr, "\n");
-  exit(ret);
+void show_version() {
+  printf("%s %s\n", program_name, program_version);
 }
 
 int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *buf, void *private) {
@@ -106,7 +94,7 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
   parent_ino = *(ext2_ino_t*)private;
   filetype = dirent->name_len >> 8;
 
-  if (ino != parent_ino && (filetype & 2) && ino != EXT2_ROOT_INO)
+  if (ino != parent_ino && (filetype == EXT2_FT_DIR) && ino != EXT2_ROOT_INO)
     /* Do not consider directory dirents other than '.' because they'll be
      * handed as the parent ino of their own dirent scan. Except for the root
      * folder which has no parent */
@@ -124,7 +112,7 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
 
   /* Lazy parent path lookup : this lookup should be run before iterating this
    * dir, but it might be not necessary to run it if it turns out that no
-   * dirent is selected. */
+   * dirent here is selected. */
   if (ppath_st == STATUS_NONE) {
     if (parent_ino == EXT2_ROOT_INO) {
       ppath = "";  /* libext2fs resolves this to '/' but we prefer it '' to
@@ -160,9 +148,9 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
   }
 
   if (ino == parent_ino) /* aka '.' */
-    printf("%s%s\n", prefix, ppath[0] ? ppath : "/");
+    printf("%s%s%c", prefix, ppath[0] ? ppath : "/", separator);
   else
-    printf("%s%s/%.*s\n", prefix, ppath, name_len, name);
+    printf("%s%s/%.*s%c", prefix, ppath, name_len, name, separator);
 
   return 0;
 }
@@ -174,12 +162,19 @@ int main(int argc, char **argv) {
   int ret;
   char *blkpath;
   struct stat stat;
+  int scanned;
 
-  while ((optc = getopt_long(argc, argv, "a:hmv", optl, &opti)) != -1) {
+  while ((optc = getopt_long(argc, argv, "0a:dhmv", optl, &opti)) != -1) {
     switch (optc) {
+      case '0':
+        separator = '\0';
+        break;
       case 'a':
         if (!sscanf(optarg, "%u", &opt_after))
           err(11, "--after: positive integer expected");
+        break;
+      case 'd':
+        opt_debug = 1;
         break;
       case 'h':
         show_help();
@@ -188,8 +183,8 @@ int main(int argc, char **argv) {
         opt_show_mtime = 1;
         break;
       case 'v':
-        opt_verbose = 1;
-        break;
+        show_version();
+        exit(0);
       case '?':
         exit(10);
     }
@@ -206,7 +201,7 @@ int main(int argc, char **argv) {
 
     blkpath = blkid_devno_to_devname(stat.st_dev);
     if (!blkpath)
-      err(4, "blkid_devno_to_devname(%d) failed", stat.st_dev);
+      err(4, "blkid_devno_to_devname(%lu) failed", stat.st_dev);
     dbg("'%s' mapped to blkdev '%s'", fspath, blkpath);
     fspath = blkpath;
   }
@@ -224,19 +219,21 @@ int main(int argc, char **argv) {
    * selected inode in a bitfield */
   if (opt_after) {
     size_t bytes;
+    int used = 0;
     int selected = 0;
 
     bytes = (fs->super->s_inodes_count + 7) / 8;
-    dbg("selection: allocating iselect bitfield (%d bytes)", bytes);
+    dbg("selection: allocating iselect bitfield (%zu bytes)", bytes);
     iselect = calloc(bytes, 1);
     if (!iselect)
-      err(6, "calloc(%d bytes) for iselect", bytes);
+      err(6, "calloc(%zu bytes) for iselect", bytes);
 
     ret = ext2fs_open_inode_scan(fs, buffer_blocks, &scan);
     if (ret)
       err(7, "ext2fs_open_inode_scan: error %d", ret);
 
     dbg("selection: starting inode scan");
+    scanned = 0;
     while(1) {
       ext2_ino_t ino;
       struct ext2_inode inode;
@@ -248,22 +245,23 @@ int main(int argc, char **argv) {
       }
 
       if (ino == 0) {
-        dbg("all inodes seen, ending scan loop");
+        dbg("selection: all inodes seen, ending scan loop");
         break;
       }
+      scanned++;
 
       if ((ino < EXT2_GOOD_OLD_FIRST_INO && ino != EXT2_ROOT_INO) || /* Ignore special inodes - except the root one */
           inode.i_links_count == 0)                                  /* Ignore unused inode */
         continue;
+      used++;
 
       if (inode.i_mtime >= opt_after || inode.i_ctime >= opt_after) {
         iselect[ino >> 3] |= 1 << (ino & 7);
         selected++;
       }
-      /* Use the more recent timestamp between ctime (meta mod) and mtime (data mod) */
-      //m.mtime = inode.i_mtime > inode.i_ctime ? inode.i_mtime : inode.i_ctime;
     }
-    dbg("selection: inode scan done (%d inodes selected)", selected);
+    dbg("dirs: %d inode scan done (%.1f%%)", scanned, scanned * 100. / fs->super->s_inodes_count);
+    dbg("dirs: %d inode selected out of %d used inodes (%.1f%%)", selected, used, selected * 100. / used);
 
     ext2fs_close_inode_scan(scan);
   }
@@ -276,6 +274,7 @@ int main(int argc, char **argv) {
     err(7, "ext2fs_open_inode_scan: error %d", ret);
 
   dbg("dirs: starting inode scan");
+  scanned = 0;
   while(1) {
     ext2_ino_t ino;
     struct ext2_inode inode;
@@ -287,22 +286,23 @@ int main(int argc, char **argv) {
     char dirbuf[64*1024];
 
     ret = ext2fs_get_next_inode(scan, &ino, &inode);
-    if (__builtin_expect(ret, 0)) {
+    if (ret) {
       fprintf(stderr, "dirs: warning: inode #%d: scan error %d\n", ino, ret);
       continue;
     }
 
     if (ino == 0) {
-      dbg("all inodes seen, ending scan loop");
+      dbg("dirs: all inodes seen, ending scan loop");
       break;
     }
+    scanned++;
 
     if ((ino < EXT2_GOOD_OLD_FIRST_INO && ino != EXT2_ROOT_INO) || /* Ignore special inodes - except the root one */
-        inode.i_links_count == 0 ||                                /* Ignore unused inode */
+        inode.i_links_count == 0 ||                                /* Ignore unlinked inode */
         !LINUX_S_ISDIR(inode.i_mode))                              /* Only consider dirs */
       continue;
 
-    dbg("%-8d fetching dirents", ino);
+    dbg("#%-8d fetching dirents", ino);
     ppath_st = STATUS_NONE;
     ret = ext2fs_dir_iterate(fs, ino, 0, dirbuf, dirent_cb, &ino);
     if (ret)
@@ -310,7 +310,7 @@ int main(int argc, char **argv) {
     if (ppath_st == STATUS_ALLOC)
       ext2fs_free_mem(&ppath);
   }
-  dbg("selection: inode scan done");
+  dbg("dirs: %d inode scan done (%.1f%%)", scanned, scanned * 100. / fs->super->s_inodes_count);
 
   ext2fs_close_inode_scan(scan);
   ext2fs_close(fs);
