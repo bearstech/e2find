@@ -16,6 +16,7 @@ static const char *program_version = "0.3";
 static unsigned int opt_after = 0;
 static int opt_show_mtime = 0;
 static int opt_debug = 0;
+static int opt_unique = 0;
 static char separator = '\n';
 
 static char *fspath;
@@ -48,6 +49,7 @@ static struct option optl[] = {
   {"debug",      no_argument,       NULL, 'd'},
   {"help",       no_argument,       NULL, 'h'},
   {"show-mtime", no_argument,       NULL, 'm'},
+  {"unique",     no_argument,       NULL, 'u'},
   {"version",    no_argument,       NULL, 'v'},
   {NULL, 0, NULL, 0},
 };
@@ -72,6 +74,7 @@ void show_help() {
     "  -d, --debug           Show debug/progress informations\n" \
     "  -h, --help            This help\n" \
     "  -m, --mtime           Prefix file names with mtime (as epoch)\n" \
+    "  -u, --unique          Output at most one name per inode\n" \
     "  -v, --version         Show program name and version)\n" \
     "\n" \
     "TIMESPEC is expressed as Unix epoch (local) time.\n");
@@ -100,8 +103,18 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
      * folder which has no parent */
     return 0;
 
-  if (iselect && !(iselect[ino >> 3] & (1 << (ino & 7))))
-    return 0; /* Selection says we're not interested in this inode */
+  if (iselect) {
+    int ibyte = ino >> 3;
+    int ibit  = 1 << (ino & 7);
+
+    /* Selection says we're not interested in this inode */
+    if (!(iselect[ibyte] & ibit))
+      return 0;
+
+    /* Clear the selection bit to show only one name per inode if requested */
+    if (opt_unique)
+      iselect[ibyte] &= ~ibit;
+  }
 
   name = dirent->name;
   name_len = dirent->name_len & 0xff;
@@ -163,8 +176,10 @@ int main(int argc, char **argv) {
   char *blkpath;
   struct stat stat;
   int scanned;
+  int used;
+  int selected;
 
-  while ((optc = getopt_long(argc, argv, "0a:dhmv", optl, &opti)) != -1) {
+  while ((optc = getopt_long(argc, argv, "0a:dhmuv", optl, &opti)) != -1) {
     switch (optc) {
       case '0':
         separator = '\0';
@@ -181,6 +196,9 @@ int main(int argc, char **argv) {
         exit(0);
       case 'm':
         opt_show_mtime = 1;
+        break;
+      case 'u':
+        opt_unique = 1;
         break;
       case 'v':
         show_version();
@@ -215,25 +233,33 @@ int main(int argc, char **argv) {
     fs->super->s_inodes_count - fs->super->s_free_inodes_count,
     (fs->super->s_inodes_count - fs->super->s_free_inodes_count) * 100. / fs->super->s_inodes_count);
 
-  /* If we have a selection criteria, we run a first inode scan and mark the
-   * selected inode in a bitfield */
-  if (opt_after) {
+  if (opt_after || opt_unique) {
     size_t bytes;
-    int used = 0;
-    int selected = 0;
 
     bytes = (fs->super->s_inodes_count + 7) / 8;
     dbg("selection: allocating iselect bitfield (%zu bytes)", bytes);
-    iselect = calloc(bytes, 1);
+    iselect = malloc(bytes);
     if (!iselect)
-      err(6, "calloc(%zu bytes) for iselect", bytes);
+      err(6, "malloc(%zu bytes) for iselect", bytes);
 
+    /* Either it's a selection bitfield (start with 0s, selection process will
+     * set 1s), either it's a do-not-output twice bitfield (start with 1s,
+     * clear when done). If both are required, selection process takes
+     * precedence. */
+    memset(iselect, opt_after ? 0 : 0xff, bytes);
+  }
+
+  /* If we have a selection criteria, we run a first inode scan and mark the
+   * selected inode in a bitfield */
+  if (opt_after) {
     ret = ext2fs_open_inode_scan(fs, buffer_blocks, &scan);
     if (ret)
       err(7, "ext2fs_open_inode_scan: error %d", ret);
 
     dbg("selection: starting inode scan");
     scanned = 0;
+    used = 0;
+    selected = 0;
     while(1) {
       ext2_ino_t ino;
       struct ext2_inode inode;
