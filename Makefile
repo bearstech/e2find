@@ -1,22 +1,13 @@
-LIBS = -lext2fs -lcom_err -lblkid
 CC = gcc
 CFLAGS = -O2 -Wall
+LDFLAGS = -lext2fs -lcom_err -lblkid
 
-.PHONY: default all clean
+.PHONY: all clean
 
-all: e2find e2find2 e2find3
+all: e2find e2find-alt
 
-%.o: %.c 
-	$(CC) $(CFLAGS) -c $< -o $@
-
-e2find: e2find.o
-	$(CC) $(<) -Wall $(LIBS) -o $@
-
-e2find2: e2find2.o
-	$(CC) $(<) -Wall $(LIBS) -o $@
-
-e2find3: e2find3.o
-	$(CC) $(<) -Wall $(LIBS) -o $@
+%: %.c 
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 
 clean:
-	-rm -f *.o e2find e2find2 e2find3
+	-rm -f e2find e2find-alt

@@ -1,3 +1,51 @@
+/* e2find-alt - ext2/3/4 file search (alternate algorithm)
+ * Copyright (C) 2015 Bearstech
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/* e2find-alt was another attempt to tackle the problem of fast filesystem
+ * traversal with inode->pathname resolution.
+ *
+ * Here we rely less on libext2fs and more on a few internal structures and
+ * lookups : there is a single inode scan which also reads all dirents in a
+ * simple data structure. Obviously, it uses more memory but less obviously
+ * it's much faster than many calls to ext2fs_get_pathname(). The latter is
+ * smart with memory : it's managed by Linux's page cache, which is a big win
+ * from programming and ressource economy views. But it's more expensive to
+ * reparse the inodes and dentries everytime we need to recursively resolve a
+ * path.
+ *
+ * Tested on a basic RAID1 soft raid with old SATA disks on an old AMD CPU,
+ * with a 8M inodes filesystem where 3.6M inodes are used :
+ *
+ *             Walllclock   CPU  RSS max
+ *   e2find          72 s  36 s     1 MB
+ *   e2find-alt      47 s  15 s   156 MB
+ *
+ * Although it looks interesting to trade memory for speed at a cheap rate of
+ * 50 MB for 1M inode (we aim to comfortably work with 100M inodes, and 5 GB
+ * memory is cheap these days), it has other drawbacks that forced us to put it
+ * aside :
+ * - it's hard to find all names/dirents for a given inode, since it's based on
+ *   a per-inode iteration (while e2find is based on a per-dirent iteration)
+ * - it has limitations due to simple data structures (4G max buffer for names)
+ * - memory might be high on some filesystems (long names)
+ * - it's only better than e2find when listing lots of inodes (ie. dump all of
+ *   them), but e2find has been designed to be mostly used to cherry pick
+ *   inodes; thus in the desired cases, e2find is as good as this e2find-alt
+ */
 #define _GNU_SOURCE /* For: getopt_long() */
 #include <stdio.h>
 #include <stdlib.h>
