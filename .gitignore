@@ -55,3 +55,7 @@ docs/_build/
 
 # PyBuilder
 target/
+
+# This project
+e2find
+e2find-alt

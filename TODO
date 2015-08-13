@@ -1,0 +1,3 @@
+- add man page
+- add e2sync/e2find --ssh option to allow for things like '-c blowfish' (pass it on to rsync)
+- write e2du fast drill-down tool (or find a way to plug e2find in ncdu)
