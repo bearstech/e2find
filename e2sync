@@ -36,7 +36,7 @@ sub err {
 }
 
 sub dbg {
-  print STDERR @_, "\n" if $opt_debug;
+  print STDERR "++ ", @_, "\n" if $opt_debug;
 }
 
 sub show_help {
@@ -75,6 +75,7 @@ $dst_arg =~ s:/+$::;
 sub get_cmd {
   my $arg = shift;
   my @cmd = qw/e2find --show-mtime --show-ctime -0 --mountpoint/;
+  push(@cmd, '--debug') if $opt_debug;
   $arg =~ /(.*):(.*)/ ? ('ssh', $1, @cmd, $2) : (@cmd, $arg);
 }
 
@@ -94,6 +95,7 @@ sub hash_path {
   my ($handle, $hash) = @_;
   my $in = <$handle>;
   if (defined $in) {
+      chomp $in;
       # Parse a "<mtime> <ctime> <path>" line
       err(7, "parse error: '$in'") if not $in =~ /^ *(\d+) +(\d+) (.*)/;
       $hash->{$3} = [ 0+$1, 0+$2 ];
@@ -113,14 +115,19 @@ while (my @ready = $io->can_read($opt_timeout)) {
 close($src_fh) or err(5, "interrupted source scan");
 close($dst_fh) or err(6, "interrupted destination scan");
 
-my @sync;
+dbg("src : ", (scalar keys %src), " paths");
+dbg("dst : ", (scalar keys %dst), " paths");
+
+my %sync;
 
 sub to_sync {
   my ($reason, $path) = @_;
-  push(@sync, $path);
+
+  $sync{$path} = $reason;
+
   if ($opt_verbose) {
     $path =~ s/[\t\r\n]/+/;
-    print "$reason $path\n";
+    printf "%s %s\n", $reason, $path;
   }
 }
 
@@ -143,17 +150,35 @@ while(my ($path, $dtime) = each %dst) {
     to_sync('D', $path);
   }
 }
+to_sync('U', '/');
 
-dbg("src : ", (scalar keys %src), " paths");
-dbg("dst : ", (scalar keys %dst), " paths");
-dbg("sync: ", (scalar @sync), " paths");
+# Delete cleanup : necessary optimization, otherwise we generate spurious 'file
+# has vanished' errors which would shadow legitimate real errors of the same kind.
+while (my ($path, $reason) = each %sync) {
+  next if $reason ne 'D';
+
+  my $parent = $path;
+  while ($parent =~ s:/[^/]+$::) {
+    my $pr = $sync{$parent};
+    if (defined $pr && $pr eq 'D') {
+      delete $sync{$path};
+      dbg("ignoring '$path' deletion because '$parent' is planned for deletion");
+      last;
+    }
+  }
+}
+
+dbg("sync: ", (scalar keys %sync), " paths");
+if ($opt_debug) {
+  dbg(sprintf("%s %s", $sync{$_}, $_)) foreach sort keys %sync;
+};
 
 my @rsync = (qw/rsync -a --acls --hard-links --numeric-ids --sparse --delete --delete-missing-args -0 --files-from=-/);
 push(@rsync, '--verbose') if $opt_verbose;
 push(@rsync, '--dry-run') if $opt_dryrun;
-push(@rsync, "$src_arg/", "$dst_arg/");
+push(@rsync, "$src_arg", "$dst_arg");
 
 dbg("sync: running: @rsync");
 open(my $rsync_fh, '|-', @rsync) or err(8);
-print $rsync_fh "$_\0" foreach @sync;
+print $rsync_fh "$_\0" foreach keys %sync;
 close($rsync_fh) or err(9, "sync: rsync error $?");

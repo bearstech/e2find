@@ -1,0 +1,47 @@
+#!/bin/sh
+
+# Args to this test script are passed to e2sync, suggestions are :
+#   --debug
+#   --verbose
+
+set -e
+
+done_fs() {
+  # Allow umount to fail
+  sudo umount $1 2>/dev/null || true
+}
+init_fs() {
+  mkdir -p $1
+  done_fs $1  # Handle leftover from a previously failed test
+  dd if=/dev/zero of=$1.img bs=1M count=1 status=none
+  mke2fs -q $1.img
+  sudo mount -o loop $1.img $1
+  sudo chown $(id -u) $1
+}
+do_fs() {
+  # debugfs is noisy, it always prints its name and version; we filter
+  # its output and thus we have to explictly handle its error (cannot
+  # test LHS of pipe with POSIX shell)
+  err=$(debugfs -w -R "$*" $1 2>&1 |grep -v ^"debugfs 1")
+  if [ -n "$err" ]; then
+    echo "$err"
+    exit 2
+  fi
+}
+
+teardown() {
+  done_fs t/a
+  done_fs t/b
+  rm -rf t
+}
+trap teardown 0 INT QUIT
+
+init_fs t/a
+init_fs t/b
+touch t/a/to-copy
+mkdir t/a/src
+touch t/a/src/new
+touch t/b/to-delete
+mkdir t/b/dst
+touch t/b/dst/old
+sudo ./e2sync t/a t/b "$@"
