@@ -31,8 +31,10 @@ static const char *program_version = "0.3";
 
 static unsigned int opt_after = 0;
 static int opt_show_mtime = 0;
+static int opt_show_ctime = 0;
 static int opt_debug = 0;
 static int opt_unique = 0;
+static int opt_mountpoint = 0;
 static char separator = '\n';
 
 static char *fspath;
@@ -62,9 +64,11 @@ static char *iselect = NULL;
 static struct option optl[] = {
   {"print0",     no_argument,       NULL, '0'},
   {"after",      required_argument, NULL, 'a'},
+  {"show-ctime", no_argument,       NULL, 'c'},
   {"debug",      no_argument,       NULL, 'd'},
   {"help",       no_argument,       NULL, 'h'},
   {"show-mtime", no_argument,       NULL, 'm'},
+  {"mountpoint", no_argument,       NULL, 'p'},
   {"unique",     no_argument,       NULL, 'u'},
   {"version",    no_argument,       NULL, 'v'},
   {NULL, 0, NULL, 0},
@@ -87,13 +91,17 @@ void show_help() {
     "\n" \
     "  -0, --print0          Use 0 characters instead of newlines\n" \
     "  -a, --after TIMESPEC  Only show files modified after TIMESPEC\n" \
+    "  -c, --ctime           Prefix file names with ctime (as epoch)\n" \
     "  -d, --debug           Show debug/progress informations\n" \
     "  -h, --help            This help\n" \
+    "  -p, --mountpoint      Ensure /path is the fs mountpoint\n" \
     "  -m, --mtime           Prefix file names with mtime (as epoch)\n" \
     "  -u, --unique          Output at most one name per inode\n" \
     "  -v, --version         Show program name and version)\n" \
     "\n" \
-    "TIMESPEC is expressed as Unix epoch (local) time.\n");
+    "TIMESPEC is expressed as Unix epoch (local) time.\n" \
+    "If both --show-mtime and --show-ctime are used, mtime is\n" \
+    "displayed first and ctime second\n");
 }
 
 void show_version() {
@@ -104,7 +112,7 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
   char *name;
   int filetype;;
   int name_len;
-  char prefix[16];
+  char prefix[32];
   struct ext2_inode inode;
   ext2_ino_t ino;
   ext2_ino_t parent_ino;
@@ -162,15 +170,21 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
     }
   }
 
-  if (opt_show_mtime) {
+  if (opt_show_mtime || opt_show_ctime) {
     int ret;
 
     ret = ext2fs_read_inode(fs, ino, &inode);
     if (ret) {
       fprintf(stderr, "warning: read_inode #%d: error %d\n", ino, ret);
-      snprintf(prefix, 16, "%10s ", "?");
+      snprintf(prefix, 16, "%s ", "?");
     } else {
-      snprintf(prefix, 16, "%10d ", inode.i_mtime > inode.i_ctime ? inode.i_mtime : inode.i_ctime);
+      if (opt_show_mtime && opt_show_ctime)
+        snprintf(prefix, 32, "%10d %10d ", inode.i_mtime, inode.i_ctime);
+      else
+      if (opt_show_mtime)
+        snprintf(prefix, 32, "%10d ", inode.i_mtime);
+      else
+        snprintf(prefix, 32, "%10d ", inode.i_ctime);
     }
   } else {
     prefix[0] = '\0';
@@ -190,12 +204,11 @@ int main(int argc, char **argv) {
   int optc;
   int ret;
   char *blkpath;
-  struct stat stat;
   int scanned;
   int used;
   int selected;
 
-  while ((optc = getopt_long(argc, argv, "0a:dhmuv", optl, &opti)) != -1) {
+  while ((optc = getopt_long(argc, argv, "0a:cdhmpuv", optl, &opti)) != -1) {
     switch (optc) {
       case '0':
         separator = '\0';
@@ -203,6 +216,9 @@ int main(int argc, char **argv) {
       case 'a':
         if (!sscanf(optarg, "%u", &opt_after))
           err(11, "--after: positive integer expected");
+        break;
+      case 'c':
+        opt_show_ctime = 1;
         break;
       case 'd':
         opt_debug = 1;
@@ -212,6 +228,9 @@ int main(int argc, char **argv) {
         exit(0);
       case 'm':
         opt_show_mtime = 1;
+        break;
+      case 'p':
+        opt_mountpoint = 1;
         break;
       case 'u':
         opt_unique = 1;
@@ -229,15 +248,23 @@ int main(int argc, char **argv) {
   fspath = argv[optind];
 
   if (strncmp(fspath, "/dev/", 5) != 0) {
+    struct stat stat;
+
     dbg("'%s' does not look like a blkdev, calling blkid", fspath);
-   if (lstat(fspath, &stat) != 0)
+    if (lstat(fspath, &stat) != 0)
       err(3, "lstat(%s): %s", fspath, strerror(errno));
+
+    if (opt_mountpoint && stat.st_ino != EXT2_ROOT_INO)
+      err(9, "%s is not an ext2/3/4 mountpoint", fspath);
 
     blkpath = blkid_devno_to_devname(stat.st_dev);
     if (!blkpath)
       err(4, "blkid_devno_to_devname(%lu) failed", stat.st_dev);
     dbg("'%s' mapped to blkdev '%s'", fspath, blkpath);
     fspath = blkpath;
+  } else {
+    if (opt_mountpoint)
+      err(9, "%s is not an ext2/3/4 mountpoint", fspath);
   }
 
   dbg("opening fs '%s'", fspath);
