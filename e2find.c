@@ -35,6 +35,7 @@ static int opt_show_ctime = 0;
 static int opt_debug = 0;
 static int opt_unique = 0;
 static int opt_mountpoint = 0;
+static int opt_image = 0;
 static char separator = '\n';
 
 static char *fspath;
@@ -67,6 +68,7 @@ static struct option optl[] = {
   {"show-ctime", no_argument,       NULL, 'c'},
   {"debug",      no_argument,       NULL, 'd'},
   {"help",       no_argument,       NULL, 'h'},
+  {"image",      no_argument,       NULL, 'i'},
   {"show-mtime", no_argument,       NULL, 'm'},
   {"mountpoint", no_argument,       NULL, 'p'},
   {"unique",     no_argument,       NULL, 'u'},
@@ -94,6 +96,7 @@ void show_help() {
     "  -c, --ctime           Prefix file names with ctime (as epoch)\n" \
     "  -d, --debug           Show debug/progress informations\n" \
     "  -h, --help            This help\n" \
+    "  -i, --image           Open /path as an image file\n" \
     "  -p, --mountpoint      Ensure /path is the fs mountpoint\n" \
     "  -m, --mtime           Prefix file names with mtime (as epoch)\n" \
     "  -u, --unique          Output at most one name per inode\n" \
@@ -208,7 +211,7 @@ int main(int argc, char **argv) {
   int used;
   int selected;
 
-  while ((optc = getopt_long(argc, argv, "0a:cdhmpuv", optl, &opti)) != -1) {
+  while ((optc = getopt_long(argc, argv, "0a:cdhimpuv", optl, &opti)) != -1) {
     switch (optc) {
       case '0':
         separator = '\0';
@@ -226,6 +229,9 @@ int main(int argc, char **argv) {
       case 'h':
         show_help();
         exit(0);
+      case 'i':
+        opt_image = 1;
+        break;
       case 'm':
         opt_show_mtime = 1;
         break;
@@ -247,7 +253,7 @@ int main(int argc, char **argv) {
     err(1, "missing filesystem path or blockdev");
   fspath = argv[optind];
 
-  if (strncmp(fspath, "/dev/", 5) != 0) {
+  if (!opt_image && strncmp(fspath, "/dev/", 5) != 0) {
     struct stat stat;
 
     dbg("'%s' does not look like a blkdev, calling blkid", fspath);
