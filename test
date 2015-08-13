@@ -36,12 +36,56 @@ teardown() {
 }
 trap teardown 0 INT QUIT
 
+create() {
+  # Create a file with a somewhat varying content
+  date +%s.%N >$1
+}
+
+# Generate as much differences as possible : file and folder presence, attr,
+# extended attr, ACLs, and so on. Also plant traps like hard links.
 init_fs t/a
 init_fs t/b
-touch t/a/to-copy
-mkdir t/a/src
-touch t/a/src/new
-touch t/b/to-delete
-mkdir t/b/dst
-touch t/b/dst/old
+create t/a/to-copy
+mkdir  t/a/src
+create t/a/src/new
+create t/b/to-delete
+mkdir  t/b/dst
+create t/b/dst/old
+create t/a/const
+ln     t/a/const t/a/const-hl
+cp -p  t/a/const t/b
+chmod 0600 t/a/const
+sudo chown root t/a/const
+setfacl -m user:root:rw t/a
+setfacl -m group:root:x t/b/const
+
+# Run our magic sync
 sudo ./e2sync t/a t/b "$@"
+
+# Then make sure they look the same from all points of view
+
+# Meta (attributes)
+(cd t/a && sudo \ls -lRn .) >t/a.ls
+(cd t/b && sudo \ls -lRn .) >t/b.ls
+diff t/a.ls t/b.ls
+
+# Data
+(cd t/a && sudo find . -type f -exec md5sum '{}' ';') |sort >t/a.data
+(cd t/b && sudo find . -type f -exec md5sum '{}' ';') |sort >t/b.data
+diff t/a.data t/b.data
+
+# Meta (extended attributes)
+(cd t/a && sudo lsattr -R .) |sort >t/a.attr
+(cd t/b && sudo lsattr -R .) |sort >t/b.attr
+diff t/a.attr t/b.attr
+
+# Meta (ACLs)
+(cd t/a && sudo getfacl -RPt .) |sort >t/a.acl
+(cd t/b && sudo getfacl -RPt .) |sort >t/b.acl
+diff t/a.acl t/b.acl
+
+# Hardlinks
+if [ $(stat -c %i t/b/const) != $(stat -c %i t/b/const-hl) ]; then
+  echo "hard link not preserved"
+  exit 1
+fi
