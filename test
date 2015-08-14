@@ -69,11 +69,6 @@ sudo ./e2sync t/a t/b "$@"
 (cd t/b && sudo \ls -lRn .) >t/b.ls
 diff t/a.ls t/b.ls
 
-# Data
-(cd t/a && sudo find . -type f -exec md5sum '{}' ';') |sort >t/a.data
-(cd t/b && sudo find . -type f -exec md5sum '{}' ';') |sort >t/b.data
-diff t/a.data t/b.data
-
 # Meta (extended attributes)
 (cd t/a && sudo lsattr -R .) |sort >t/a.attr
 (cd t/b && sudo lsattr -R .) |sort >t/b.attr
@@ -83,6 +78,11 @@ diff t/a.attr t/b.attr
 (cd t/a && sudo getfacl -RPt .) |sort >t/a.acl
 (cd t/b && sudo getfacl -RPt .) |sort >t/b.acl
 diff t/a.acl t/b.acl
+
+# Data
+(cd t/a && sudo find . -type f -print0 |xargs -0 md5sum) |sort >t/a.data
+(cd t/b && sudo find . -type f -print0 |xargs -0 md5sum) |sort >t/b.data
+diff t/a.data t/b.data
 
 # Hardlinks
 if [ $(stat -c %i t/b/const) != $(stat -c %i t/b/const-hl) ]; then
