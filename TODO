@@ -2,3 +2,6 @@
 - add e2sync/e2find --ssh option to allow for things like '-c blowfish' (pass it on to rsync)
 - add something to ionice e2find and rsync processes on both ends
 - write e2du fast drill-down tool (or find a way to plug e2find in ncdu)
+
+- e2find.c: tune buffer_blocks
+- e2find.c: make use of 4-byte aligned dirents to extends dirents address space to 2^34 ?
