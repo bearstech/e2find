@@ -80,8 +80,8 @@ diff t/a.attr t/b.attr
 diff t/a.acl t/b.acl
 
 # Data
-(cd t/a && sudo find . -type f -print0 |xargs -0 md5sum) |sort >t/a.data
-(cd t/b && sudo find . -type f -print0 |xargs -0 md5sum) |sort >t/b.data
+(cd t/a && sudo find . -type f -print0 |sudo xargs -0 md5sum) |sort >t/a.data
+(cd t/b && sudo find . -type f -print0 |sudo xargs -0 md5sum) |sort >t/b.data
 diff t/a.data t/b.data
 
 # Hardlinks
