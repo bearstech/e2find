@@ -56,6 +56,5 @@ docs/_build/
 # PyBuilder
 target/
 
-# This project
+# This project binary objects
 e2find
-e2find-alt

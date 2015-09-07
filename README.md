@@ -25,4 +25,4 @@ On Debian / Ubuntu :
     sudo apt-get install make gcc e2fslibs-dev comerr-dev libblkid-dev
     make
 
-'e2sync' is a Perl program and only requires Perl core.
+'e2sync' is a Perl program which requires Perl 5 and rsync >= 3.1.0.
