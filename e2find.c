@@ -231,7 +231,12 @@ struct inode_t * inode_lookup(ext2_ino_t ino, unsigned int *pos) {
   }
 
   /* When we're almost there, finish with a short scan. Two cases, two directions */
-  if (i->ino < ino) {
+  if (!i || i->ino < ino) {
+    /* For short lists (1 or 2 elements), the precedent loop might have not
+     * initialized i. Force a scan starting from first element. */
+    if (!i)
+      index = -1;
+
     //dbg("lookup(%d): going up", ino);
     do {
       index++;
