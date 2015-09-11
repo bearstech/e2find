@@ -21,12 +21,13 @@ use warnings;
 use Getopt::Long qw/:config no_ignore_case no_auto_abbrev/;
 use IO::Select;
 
-my $program_version = 0.4;
+my $program_version = "0.5";
 
 my $opt_debug = 0;
 my $opt_dryrun = 0;
 my $opt_verbose = 0;
 my $opt_timeout = 300;
+my $opt_ssh;
 my $opt_src_find = 0;
 my $opt_dst_find = 0;
 
@@ -44,7 +45,7 @@ sub dbg {
 sub show_help {
   print <<EOF;
 Usage :
-  e2sync [-h|--help] [--version] [-n|--dry-run] [-v|--verbose] [-d|--debug] [--source-find] [--dest-find] /src /dest
+  e2sync [-h|--help] [--version] [-n|--dry-run] [-v|--verbose] [-d|--debug] [--source-find] [--dest-find] [-e|--ssh ssh] /src /dest
   e2sync [...] remote:/src /dest
   e2sync [...] /src remote:/dest
 
@@ -65,12 +66,16 @@ GetOptions(
   'n|dry-run' => \$opt_dryrun,
   'd|debug'   => \$opt_debug,
   'v|verbose' => \$opt_verbose,
+  'e|ssh=s'   => \$opt_ssh,
   'source-find' => \$opt_src_find,
   'dest-find'   => \$opt_dst_find,
 ) || exit(1);
 
 err(2, 'expecting two arguments : source and destination') if @ARGV != 2;
 my ($src_arg, $dst_arg) = @ARGV;
+
+# Prepare a parsed/splitted arg list for system()
+my @ssh_args = split(/\s+/, defined $opt_ssh ? $opt_ssh : 'ssh');
 
 # Remove trailing(s) /, we expect and check that they paths are folders.
 $src_arg =~ s:/+$::;
@@ -84,7 +89,7 @@ sub get_cmd_e2find {
   #   1411474532 1411474532 /foo
   my @cmd = qw/e2find --show-mtime --show-ctime -0 --mountpoint/;
   push(@cmd, '--debug') if $opt_debug;
-  $arg =~ /(.*):(.*)/ ? ('ssh', $1, @cmd, $2) : (@cmd, $arg);
+  $arg =~ /(.*):(.*)/ ? (@ssh_args, $1, @cmd, $2) : (@cmd, $arg);
 }
 
 sub get_cmd_find {
@@ -94,7 +99,7 @@ sub get_cmd_find {
   #   1441461259.0000000000 1441461259.0000000000 /
   #   1411474532.0000000000 1411474532.0000000000 /foo
   my @opt = ('-printf', '%T@ %C@ /%P\0');
-  $arg =~ /(.*):(.*)/ ? ('ssh', $1, 'find', $2, @opt) : ('find', $arg, @opt);
+  $arg =~ /(.*):(.*)/ ? (@ssh_args, $1, 'find', $2, @opt) : ('find', $arg, @opt);
 }
 
 $/ = "\0";
@@ -193,6 +198,7 @@ if ($opt_debug) {
 };
 
 my @rsync = (qw/rsync -a --acls --hard-links --numeric-ids --sparse --delete --delete-missing-args -0 --files-from=-/);
+push(@rsync, '--rsh', $opt_ssh) if defined $opt_ssh;
 push(@rsync, '--verbose') if $opt_verbose;
 push(@rsync, '--dry-run') if $opt_dryrun;
 push(@rsync, "$src_arg", "$dst_arg");
