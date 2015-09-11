@@ -21,12 +21,14 @@ use warnings;
 use Getopt::Long qw/:config no_ignore_case no_auto_abbrev/;
 use IO::Select;
 
-my $program_version = "0.4.1";
+my $program_version = 0.4;
 
 my $opt_debug = 0;
 my $opt_dryrun = 0;
 my $opt_verbose = 0;
 my $opt_timeout = 300;
+my $opt_src_find = 0;
+my $opt_dst_find = 0;
 
 
 sub err {
@@ -42,7 +44,7 @@ sub dbg {
 sub show_help {
   print <<EOF;
 Usage :
-  e2sync [-h|--help] [--version] [-n|--dry-run] [-v|--verbose] [-d|--debug] /src /dest
+  e2sync [-h|--help] [--version] [-n|--dry-run] [-v|--verbose] [-d|--debug] [--source-find] [--dest-find] /src /dest
   e2sync [...] remote:/src /dest
   e2sync [...] /src remote:/dest
 
@@ -63,6 +65,8 @@ GetOptions(
   'n|dry-run' => \$opt_dryrun,
   'd|debug'   => \$opt_debug,
   'v|verbose' => \$opt_verbose,
+  'source-find' => \$opt_src_find,
+  'dest-find'   => \$opt_dst_find,
 ) || exit(1);
 
 err(2, 'expecting two arguments : source and destination') if @ARGV != 2;
@@ -72,16 +76,30 @@ my ($src_arg, $dst_arg) = @ARGV;
 $src_arg =~ s:/+$::;
 $dst_arg =~ s:/+$::;
 
-sub get_cmd {
+sub get_cmd_e2find {
   my $arg = shift;
+
+  # e2find-based: generates output like (parsed in hash_path) :
+  #   1441461259 1441461259 /
+  #   1411474532 1411474532 /foo
   my @cmd = qw/e2find --show-mtime --show-ctime -0 --mountpoint/;
   push(@cmd, '--debug') if $opt_debug;
   $arg =~ /(.*):(.*)/ ? ('ssh', $1, @cmd, $2) : (@cmd, $arg);
 }
 
+sub get_cmd_find {
+  my $arg = shift;
+
+  # find-based: generates output like (parsed in hash_path) :
+  #   1441461259.0000000000 1441461259.0000000000 /
+  #   1411474532.0000000000 1411474532.0000000000 /foo
+  my @opt = ('-printf', '%T@ %C@ /%P\0');
+  $arg =~ /(.*):(.*)/ ? ('ssh', $1, 'find', $2, @opt) : ('find', $arg, @opt);
+}
+
 $/ = "\0";
-my @src_cmd = get_cmd($src_arg);
-my @dst_cmd = get_cmd($dst_arg);
+my @src_cmd = $opt_src_find ? get_cmd_find($src_arg) : get_cmd_e2find($src_arg);
+my @dst_cmd = $opt_dst_find ? get_cmd_find($dst_arg) : get_cmd_e2find($dst_arg);
 dbg("src: running: @src_cmd");
 dbg("dst: running: @dst_cmd");
 open(my $src_fh, '-|', @src_cmd) or err(3);
@@ -96,8 +114,9 @@ sub hash_path {
   my $in = <$handle>;
   if (defined $in) {
       chomp $in;
-      # Parse a "<mtime> <ctime> <path>" line
-      err(7, "parse error: '$in'") if not $in =~ /^ *(\d+) +(\d+) (.*)/;
+      # Parse a "<mtime> <ctime> <path>" line, where optional fractional part
+      # in mtime and ctime are currently ignored */
+      err(7, "parse error: '$in'") if not $in =~ /^ *(\d+)(?:\.\d+)? +(\d+)(?:\.\d+)? (.*)/;
       $hash->{$3} = [ 0+$1, 0+$2 ];
   } else {
     # An empty reads denote a normal process ending

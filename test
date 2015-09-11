@@ -59,8 +59,11 @@ sudo chown root t/a/const
 setfacl -m user:root:rw t/a
 setfacl -m group:root:x t/b/const
 
-# Run our magic sync
+# Run our magic sync with all e2find/find combinations
 sudo ./e2sync t/a t/b "$@"
+sudo ./e2sync --source-find t/a t/b "$@"
+sudo ./e2sync --dest-find   t/a t/b "$@"
+sudo ./e2sync --source-find --dest-find t/a t/b "$@"
 
 # Then make sure they look the same from all points of view
 
