@@ -300,7 +300,7 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
 
   i = inode_lookup(ino, &ino_idx);
   if (!i) {
-    fprintf(stderr, "warning: ignoring dirent '%*s': inode_lookup(#%d) failed\n", name_len, name, ino);
+    fprintf(stderr, "warning: ignoring dirent '%.*s': inode_lookup(#%d) failed\n", name_len, name, ino);
     return 0;
   }
   d.ino = ino_idx;
