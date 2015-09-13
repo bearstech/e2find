@@ -26,7 +26,7 @@ my $program_version = "0.5";
 my $opt_debug = 0;
 my $opt_dryrun = 0;
 my $opt_verbose = 0;
-my $opt_timeout = 300;
+my $opt_timeout = 7200;
 my $opt_ssh;
 my $opt_src_find = 0;
 my $opt_dst_find = 0;
@@ -136,8 +136,8 @@ while (my @ready = $io->can_read($opt_timeout)) {
   hash_path($dst_fh, \%dst) if @ready > 1 || $ready[0] == $dst_fh;
 }
 
-close($src_fh) or err(5, "interrupted source scan");
-close($dst_fh) or err(6, "interrupted destination scan");
+close($src_fh) or err(5, "interrupted source scan (!='$!' ?=$?)");
+close($dst_fh) or err(6, "interrupted destination scan (!='$!' ?=$?)");
 
 dbg("src : ", (scalar keys %src), " paths");
 dbg("dst : ", (scalar keys %dst), " paths");
