@@ -299,8 +299,10 @@ int dirent_cb(struct ext2_dir_entry *dirent, int offset, int blocksize, char *bu
     name_len = 0;
 
   i = inode_lookup(ino, &ino_idx);
-  if (!i)
-    err(10, "inode_lookup(#%d) failed", ino);
+  if (!i) {
+    fprintf(stderr, "warning: ignoring dirent '%*s': inode_lookup(#%d) failed\n", name_len, name, ino);
+    return 0;
+  }
   d.ino = ino_idx;
   d.parent = cb->parent_ino_idx;
   i->dirent = dirents.bytes_used;
@@ -497,7 +499,7 @@ int main(int argc, char **argv) {
 
     ret = ext2fs_get_next_inode(scan, &ino, &inode);
     if (ret) {
-      fprintf(stderr, "selection: warning: inode #%d: scan error %d\n", ino, ret);
+      fprintf(stderr, "warning: selecting inode #%d: scan error %d\n", ino, ret);
       continue;
     }
 
