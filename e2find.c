@@ -215,7 +215,7 @@ struct inode_t * inode_lookup(ext2_ino_t ino, unsigned int *pos) {
   /* Bisect the inodes[] array */
   index = inodes.count;
   ihalf = inodes.count;
-  while ((ihalf /= 2) > 1) {
+  while ((ihalf /= 2) > 2) {
     if (i && i->ino < ino)
       index += ihalf;
     else
@@ -239,6 +239,8 @@ struct inode_t * inode_lookup(ext2_ino_t ino, unsigned int *pos) {
 
     //dbg("lookup(%d): going up", ino);
     do {
+      if (index >= inodes.count)
+        return NULL;
       index++;
       i = (struct inode_t *)(inode_p + inodes_elsize * index);
       if (i->ino == ino) {
@@ -249,6 +251,8 @@ struct inode_t * inode_lookup(ext2_ino_t ino, unsigned int *pos) {
   } else {
     //dbg("lookup(%d): going down", ino);
     do {
+      if (index <= 0)
+        return NULL;
       index--;
       i = (struct inode_t *)(inode_p + inodes_elsize * index);
       //dbg("lookup(%d):   index=%d i->ino=%d", ino, index, i->ino);
