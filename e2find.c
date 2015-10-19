@@ -28,7 +28,7 @@
 #include <ext2fs/ext2fs.h>
 
 static const char *program_name = "e2find";
-static const char *program_version = "0.5";
+static const char *program_version = "0.6-dev";
 
 static unsigned int opt_after = 0;
 static int opt_show_mtime = 0;
@@ -463,6 +463,8 @@ int main(int argc, char **argv) {
 
   array_init(&inodes);  /* Dynamically grows, no initial size */
   array_init(&dirents); /* Dynamically grows, no initial size */
+  dbg("array[%p]: inodes initialized", &inodes);
+  dbg("array[%p]: dirents initialized", &dirents);
 
   if (opt_show_mtime && opt_show_ctime) {
     inodes_eltype = INODES_MTIME_CTIME;
