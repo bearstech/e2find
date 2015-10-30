@@ -21,7 +21,7 @@ use warnings;
 use Getopt::Long qw/:config no_ignore_case no_auto_abbrev/;
 use IO::Select;
 
-my $program_version = "0.6-dev";
+my $program_version = "0.6";
 
 my $opt_debug = 0;
 my $opt_dryrun = 0;
@@ -114,88 +114,108 @@ my $io = IO::Select->new;
 $io->add($src_fh);
 $io->add($dst_fh);
 
-sub hash_path {
-  my ($handle, $hash) = @_;
-  my $in = <$handle>;
-  if (defined $in) {
-      chomp $in;
-      # Parse a "<mtime> <ctime> <path>" line, where optional fractional part
-      # in mtime and ctime are currently ignored */
-      err(7, "parse error: '$in'") if not $in =~ /^ *(\d+)(?:\.\d+)? +(\d+)(?:\.\d+)? (.*)/;
-      $hash->{$3} = [ 0+$1, 0+$2 ];
-  } else {
-    # An empty reads denote a normal process ending
-    $io->remove($handle);
-  }
-}
+# %files: hashes {path} to packed(src_mtime, src_ctime, dst_mtime, dst_ctime)
+#
+#   This data structure must be memory-optimized, it needs to store within a
+#   reasonnable amount of memory up to 100 million paths. Packing 4 epochs as
+#   16 bytes (actually the full boxed var uses 50 bytes) seems to be the
+#   simplest and most efficient Perlish way for now.
+#
+my %files;
 
-my %src;
-my %dst;
 while (my @ready = $io->can_read($opt_timeout)) {
-  hash_path($src_fh, \%src) if @ready > 1 || $ready[0] == $src_fh;
-  hash_path($dst_fh, \%dst) if @ready > 1 || $ready[0] == $dst_fh;
+  # Hashing paths from local or remote ends is pretty much the same thing,
+  # that's why we run the same loop for any ready filehandle. The only
+  # difference is that we stuff timedata at different offsets in the packed
+  # value.
+  foreach my $fh (@ready) {
+    my $in = <$fh>;
+    if (!defined $in) {
+      # An empty reads denote a normal process ending
+      $io->remove($fh);
+      next;
+    }
+
+    # Parse a "<mtime> <ctime> <path>" line, where optional fractional part
+    # in mtime and ctime are currently ignored */
+    chomp $in;
+    err(7, "parse error: '$in'") if not $in =~ /^ *(\d+)(?:\.\d+)? +(\d+)(?:\.\d+)? (.*)/o;
+    my ($mtime, $ctime, $path) = ($1, $2, $3);
+
+    # Create or update value for this path entry
+    my @v;
+    my $packed = $files{$path};
+    if (defined $packed) {
+      @v = unpack "LLLL", $packed;
+    } else {
+      @v = (0, 0, 0, 0);
+    }
+    if ($fh == $src_fh) {
+      $v[0] = 0 + $mtime;
+      $v[1] = 0 + $ctime;
+    } else {
+      $v[2] = 0 + $mtime;
+      $v[3] = 0 + $ctime;
+    }
+    $files{$path} = pack "LLLL", @v;
+  }
 }
 
 close($src_fh) or err(5, "interrupted source scan (!='$!' ?=$?)");
 close($dst_fh) or err(6, "interrupted destination scan (!='$!' ?=$?)");
+dbg("hashed: ", scalar keys(%files), " paths");
 
-dbg("src : ", (scalar keys %src), " paths");
-dbg("dst : ", (scalar keys %dst), " paths");
+my %deleted;
 
-my %sync;
+while(my ($path, $packed) = each %files) {
+  my $reason;
+  my ($src_mtime, $src_ctime, $dst_mtime, $dst_ctime) = unpack "LLLL", $packed;
 
-sub to_sync {
-  my ($reason, $path) = @_;
+  # Note that entries with (0,0,0,0) cannot exist by design
 
-  $sync{$path} = $reason;
+  if ($src_mtime == 0) {             # In dst, not in src : Deleted (remove dst)
+    $deleted{$path} = 1;
+    $reason = 'D';
+  }
+  elsif ($dst_mtime == 0) {          # In src, not in dst : New file (copy)
+    $reason = 'N';
+  }
+  elsif ($src_mtime > $dst_mtime) {  # In src and dst, data more recent in src : Update (data+meta)
+    $reason = 'U';
+  }
+  elsif ($src_ctime > $dst_ctime) {  # In src and dst, meta more recent in src : Modify (meta)
+    $reason = 'M';
+  }
+  else {                             # Nothing to do, up-to-date
+    delete $files{$path};
+    next;
+  }
 
   if ($opt_verbose) {
     $path =~ s/[\t\r\n]/+/;
     printf "%s %s\n", $reason, $path;
   }
 }
+# Make sure root is included in sync list, needed by rsync. Value is ignored.
+$files{'/'} = 1;
 
-while(my ($path, $stime) = each %src) {
-  my $dtime = $dst{$path};
-  if (not defined $dtime) {  # In src, not in dst : New file (copy)
-    to_sync('N', $path);
-  }
-  elsif ($stime->[0] > $dtime->[0]) {  # In src and dst, data more recent in src : Update (data+meta)
-    to_sync('U', $path);
-  }
-  elsif ($stime->[1] > $dtime->[1]) {  # In src and dst, meta more recent in src : Modify (meta)
-    to_sync('M', $path);
-  }
-}
-
-while(my ($path, $dtime) = each %dst) {
-  my $stime = $src{$path};
-  if (not defined $stime) {  # In dst, not in src : Deletes
-    to_sync('D', $path);
-  }
-}
-to_sync('U', '/');
-
-# Delete cleanup : necessary optimization, otherwise we generate spurious 'file
-# has vanished' errors which would shadow legitimate real errors of the same kind.
-while (my ($path, $reason) = each %sync) {
-  next if $reason ne 'D';
-
+# Handling deletes : if /foo and /foo/bar are to be delete, rsync will generate
+# a spurious 'file has vanished' errors which will shadow legitimate real
+# errors of the same kind. Thus if a deleted path
+# is already implied by another deleted path which is its parent, we delete the former.
+#
+while (my ($path, undef) = each %deleted) {
   my $parent = $path;
   while ($parent =~ s:/[^/]+$::) {
-    my $pr = $sync{$parent};
-    if (defined $pr && $pr eq 'D') {
-      delete $sync{$path};
+    if (defined $deleted{$parent}) {
+      delete $files{$path};
       dbg("ignoring '$path' deletion because '$parent' is planned for deletion");
       last;
     }
   }
 }
 
-dbg("sync: ", (scalar keys %sync), " paths");
-if ($opt_debug) {
-  dbg(sprintf("%s %s", $sync{$_}, $_)) foreach sort keys %sync;
-};
+dbg("to sync: ", (scalar keys %files), " files");
 
 my @rsync = (qw/rsync -a --acls --hard-links --numeric-ids --sparse --delete --delete-missing-args -0 --files-from=-/);
 push(@rsync, '--rsh', $opt_ssh) if defined $opt_ssh;
@@ -205,5 +225,5 @@ push(@rsync, "$src_arg", "$dst_arg");
 
 dbg("sync: running: @rsync");
 open(my $rsync_fh, '|-', @rsync) or err(8);
-print $rsync_fh "$_\0" foreach keys %sync;
+print $rsync_fh "$_\0" foreach keys %files;
 close($rsync_fh) or err(9, "sync: rsync error $?");

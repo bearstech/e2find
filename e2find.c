@@ -28,7 +28,7 @@
 #include <ext2fs/ext2fs.h>
 
 static const char *program_name = "e2find";
-static const char *program_version = "0.6-dev";
+static const char *program_version = "0.6";
 
 static unsigned int opt_after = 0;
 static int opt_show_mtime = 0;
