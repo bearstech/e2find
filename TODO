@@ -1,3 +1,12 @@
+e2sync: Optimize for speed :
+- prefer IO::Poll for lower bit/vector maintenance overhead (than ::Select)
+- use nonblocking reads + own unbuffered line splitting to read as much lines as possible per poll() call
+  (1 poll/select per line is too expensive)
+
+e2sync: handle rsync errors as warnings :
+- as a default, filter "normal error" rsync error 6144 (24     Partial transfer due to vanished source files)
+- add an option to allow to fail on any error
+
 - finish README.md
 - add man page
 - write e2du fast drill-down tool (or find a way to plug e2find in ncdu)
