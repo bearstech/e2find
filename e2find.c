@@ -196,7 +196,7 @@ void show_help() {
     "\n" \
     "TIMESPEC is expressed as Unix epoch (local) time.\n" \
     "If both --show-mtime and --show-ctime are used, mtime is\n" \
-    "displayed first and ctime second\n");
+    "displayed first and ctime last.\n");
 }
 
 void show_version() {
