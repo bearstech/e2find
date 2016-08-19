@@ -226,4 +226,4 @@ push(@rsync, "$src_arg", "$dst_arg");
 dbg("sync: running: @rsync");
 open(my $rsync_fh, '|-', @rsync) or err(8);
 print $rsync_fh "$_\0" foreach keys %files;
-close($rsync_fh) or err(9, "sync: rsync error $?");
+close($rsync_fh) or err(9, "sync: rsync error ".($? >>8));
