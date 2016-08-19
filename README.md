@@ -48,8 +48,8 @@ the second one invokes `e2find` :
 ![e2find vs. find block offsets](perf/compare-offset.png?raw=true)
 
 The operation is much faster on spindles (45 vs. 470 sec) and most importantly
-puts much less I/O pressure by using sequential accesses and far less IOPS. See
-the [perf/ folder](perf/) for complete reports.
+puts much less I/O pressure by using mostly sequential accesses and far less
+I/O operations. See the [perf/ folder](perf/) for complete reports.
 
 Memory required will depend on the number of allocated inodes, number of
 folders and the average file name size. On a 9M inodes filesystem with
@@ -74,8 +74,17 @@ still usable as a non-privileged user (eg. for testing or analysis purposes).
 
 ## Implementation
 
-`e2find` uses a two-pass process : it gathers all used inodes in a first pass, then reads all directory entries in inode order in a second pass. Then it displays the names found from the directory entries, associating them with the metadata collected from the inodes.
+`e2find` uses a two-pass process : it gathers all used inodes in a first pass,
+then reads all directory entries in inode order in a second pass. Then it
+displays the names found from the directory entries, associating them with the
+metadata collected from the inodes.
 
-Through hardlinks, a file-type inode may have several distinct names. As a default all names are printed out. It is possible to ask to print only one name per inode (-u option), although the name chosen to represent the inode in this case is arbitrary (there is no 'canonical' or 'first' name, all directory entries are equal for naming an inode).
+Through hardlinks, a file-type inode may have several distinct names. As a
+default all names are printed out. It is possible to ask to print only one name
+per inode (-u option), although the name chosen to represent the inode in this
+case is arbitrary (there is no 'canonical' or 'first' name, all directory
+entries are equal for naming an inode).
 
-The data structures used to implement the process are quite simple (arrays) but care has been taken for all operations to be o(1) or o(log(n)).
+The data structures used to implement the process are quite simple (arrays) but
+care has been taken for all operations to be o(1) or o(log(n)).
+
