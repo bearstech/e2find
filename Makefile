@@ -7,7 +7,7 @@ LDFLAGS += -lext2fs -lcom_err -lblkid
 all: e2find
 
 %: %.c 
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 test:
 	@./test
