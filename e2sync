@@ -217,7 +217,7 @@ while (my ($path, undef) = each %deleted) {
 
 dbg("to sync: ", (scalar keys %files), " files");
 
-my @rsync = (qw/rsync -a --acls --hard-links --numeric-ids --sparse --delete --delete-missing-args -0 --files-from=-/);
+my @rsync = (qw/rsync -a --acls --hard-links --xattrs --numeric-ids --sparse --delete --delete-missing-args -0 --files-from=-/);
 push(@rsync, '--rsh', $opt_ssh) if defined $opt_ssh;
 push(@rsync, '--verbose') if $opt_verbose;
 push(@rsync, '--dry-run') if $opt_dryrun;
